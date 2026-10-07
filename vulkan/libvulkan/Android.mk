@@ -44,6 +44,7 @@ LOCAL_SRC_FILES := \
 	debug_report.cpp \
 	driver.cpp \
 	driver_gen.cpp \
+	kiro_vk11.cpp \
 	layers_extensions.cpp \
 	stubhal.cpp \
 	swapchain.cpp \

@@ -23,6 +23,7 @@
 // to catch mismatches between vulkan.h and this file
 #undef VK_NO_PROTOTYPES
 #include "api.h"
+#include "kiro_vk11.h"
 
 namespace vulkan {
 namespace api {
@@ -480,6 +481,9 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
     if (strcmp(pName, "vkGetDeviceProcAddr") == 0) return reinterpret_cast<PFN_vkVoidFunction>(GetDeviceProcAddr);
     if (strcmp(pName, "vkDestroyDevice") == 0) return reinterpret_cast<PFN_vkVoidFunction>(DestroyDevice);
 
+    // KiroOS: the Vulkan 1.1 device commands the 1.0 driver does not have
+    if (PFN_vkVoidFunction kiro_proc = vulkan::kiro::GetDeviceProcAddr(pName)) return kiro_proc;
+
     return GetData(device).dispatch.GetDeviceProcAddr(device, pName);
 }
 
@@ -489,6 +493,8 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         if (strcmp(pName, "vkCreateInstance") == 0) return reinterpret_cast<PFN_vkVoidFunction>(CreateInstance);
         if (strcmp(pName, "vkEnumerateInstanceLayerProperties") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceLayerProperties);
         if (strcmp(pName, "vkEnumerateInstanceExtensionProperties") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceExtensionProperties);
+        // KiroOS: vkEnumerateInstanceVersion (Vulkan 1.1)
+        if (PFN_vkVoidFunction kiro_proc = vulkan::kiro::GetGlobalProcAddr(pName)) return kiro_proc;
 
         ALOGE("invalid vkGetInstanceProcAddr(VK_NULL_HANDLE, \"%s\") call", pName);
         return nullptr;
@@ -648,11 +654,16 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
     }
     // clang-format off
 
+    // KiroOS: the Vulkan 1.1 commands the 1.0 driver does not have
+    if (PFN_vkVoidFunction kiro_proc = vulkan::kiro::GetInstanceProcAddr(pName)) return kiro_proc;
+
     return GetData(instance).dispatch.GetInstanceProcAddr(instance, pName);
 }
 
 VKAPI_ATTR void GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties* pProperties) {
     GetData(physicalDevice).dispatch.GetPhysicalDeviceProperties(physicalDevice, pProperties);
+    // KiroOS: Vulkan 1.1.130 (kiro_vk11.h)
+    vulkan::kiro::PatchProperties(pProperties);
 }
 
 VKAPI_ATTR void GetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties* pQueueFamilyProperties) {
@@ -692,10 +703,16 @@ VKAPI_ATTR VkResult DeviceWaitIdle(VkDevice device) {
 }
 
 VKAPI_ATTR VkResult AllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo, const VkAllocationCallbacks* pAllocator, VkDeviceMemory* pMemory) {
-    return GetData(device).dispatch.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+    // KiroOS: memory priority / dedicated structs off for the 1.0 driver, the budget tracked
+    VkMemoryAllocateInfo kiro_info;
+    VkResult result = GetData(device).dispatch.AllocateMemory(device, vulkan::kiro::SanitizeAllocateInfo(pAllocateInfo, &kiro_info), pAllocator, pMemory);
+    if (result == VK_SUCCESS)
+        vulkan::kiro::OnAllocateMemory(device, pAllocateInfo, *pMemory);
+    return result;
 }
 
 VKAPI_ATTR void FreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* pAllocator) {
+    vulkan::kiro::OnFreeMemory(device, memory);
     GetData(device).dispatch.FreeMemory(device, memory, pAllocator);
 }
 
@@ -852,10 +869,22 @@ VKAPI_ATTR void DestroyShaderModule(VkDevice device, VkShaderModule shaderModule
 }
 
 VKAPI_ATTR VkResult CreatePipelineCache(VkDevice device, const VkPipelineCacheCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkPipelineCache* pPipelineCache) {
-    return GetData(device).dispatch.CreatePipelineCache(device, pCreateInfo, pAllocator, pPipelineCache);
+    // KiroOS: a cache the app does not keep is kept by the loader on the app's storage
+    VkPipelineCacheCreateInfo kiro_info;
+    bool kiro_seeded = false;
+    const VkPipelineCacheCreateInfo* info = vulkan::kiro::SeedPipelineCache(device, pCreateInfo, &kiro_info, &kiro_seeded);
+    VkResult result = GetData(device).dispatch.CreatePipelineCache(device, info, pAllocator, pPipelineCache);
+    if (result != VK_SUCCESS && info != pCreateInfo) {
+        // stored data the driver refused: start empty
+        result = GetData(device).dispatch.CreatePipelineCache(device, pCreateInfo, pAllocator, pPipelineCache);
+    }
+    if (result == VK_SUCCESS)
+        vulkan::kiro::OnPipelineCacheCreated(device, *pPipelineCache, kiro_seeded);
+    return result;
 }
 
 VKAPI_ATTR void DestroyPipelineCache(VkDevice device, VkPipelineCache pipelineCache, const VkAllocationCallbacks* pAllocator) {
+    vulkan::kiro::OnPipelineCacheDestroy(device, pipelineCache);
     GetData(device).dispatch.DestroyPipelineCache(device, pipelineCache, pAllocator);
 }
 
@@ -868,11 +897,16 @@ VKAPI_ATTR VkResult MergePipelineCaches(VkDevice device, VkPipelineCache dstCach
 }
 
 VKAPI_ATTR VkResult CreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo* pCreateInfos, const VkAllocationCallbacks* pAllocator, VkPipeline* pPipelines) {
-    return GetData(device).dispatch.CreateGraphicsPipelines(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    VkResult result = GetData(device).dispatch.CreateGraphicsPipelines(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    // KiroOS: new pipelines in a cache the loader keeps
+    vulkan::kiro::OnPipelinesCreated(device, pipelineCache);
+    return result;
 }
 
 VKAPI_ATTR VkResult CreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo* pCreateInfos, const VkAllocationCallbacks* pAllocator, VkPipeline* pPipelines) {
-    return GetData(device).dispatch.CreateComputePipelines(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    VkResult result = GetData(device).dispatch.CreateComputePipelines(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    vulkan::kiro::OnPipelinesCreated(device, pipelineCache);
+    return result;
 }
 
 VKAPI_ATTR void DestroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks* pAllocator) {

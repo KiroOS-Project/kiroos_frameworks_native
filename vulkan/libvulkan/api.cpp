@@ -33,6 +33,7 @@
 #include <vulkan/vk_layer_interface.h>
 #include "api.h"
 #include "driver.h"
+#include "kiro_vk11.h"
 #include "layers_extensions.h"
 
 namespace vulkan {
@@ -1167,13 +1168,19 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
                       const VkDeviceCreateInfo* pCreateInfo,
                       const VkAllocationCallbacks* pAllocator,
                       VkDevice* pDevice) {
-    return LayerChain::CreateDevice(physicalDevice, pCreateInfo, pAllocator,
-                                    pDevice);
+    VkResult result = LayerChain::CreateDevice(physicalDevice, pCreateInfo,
+                                               pAllocator, pDevice);
+    // KiroOS: the device's GPU, for the memory budget and the pipeline cache
+    if (result == VK_SUCCESS)
+        kiro::OnDeviceCreated(physicalDevice, *pDevice);
+    return result;
 }
 
 void DestroyDevice(VkDevice device, const VkAllocationCallbacks* pAllocator) {
-    if (device != VK_NULL_HANDLE)
+    if (device != VK_NULL_HANDLE) {
+        kiro::OnDeviceDestroyed(device);
         LayerChain::DestroyDevice(device, pAllocator);
+    }
 }
 
 VkResult EnumerateInstanceLayerProperties(uint32_t* pPropertyCount,

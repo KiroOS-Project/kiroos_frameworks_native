@@ -29,6 +29,7 @@
 #include <gui/GraphicsEnv.h>
 
 #include "driver.h"
+#include "kiro_vk11.h"
 #include "stubhal.h"
 
 // #define ENABLE_ALLOC_CALLSTACKS 1
@@ -667,24 +668,28 @@ VkResult EnumerateInstanceExtensionProperties(
     const char* pLayerName,
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
-    static const std::array<VkExtensionProperties, 2> loader_extensions = {{
+    static const std::array<VkExtensionProperties, 3> loader_extensions = {{
         // WSI extensions
         {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
         {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
          VK_KHR_ANDROID_SURFACE_SPEC_VERSION},
+        // KiroOS: the Vulkan 1.1 layer (kiro_vk11.cpp), last so it can be left out
+        kiro::ExtraInstanceExtensions()[0],
     }};
+    // without the Vulkan 1.1 layer only the WSI extensions
+    const uint32_t loader_extension_count =
+        2 + std::min(kiro::ExtraInstanceExtensionCount(), 1u);
     static const VkExtensionProperties loader_debug_report_extension = {
         VK_EXT_DEBUG_REPORT_EXTENSION_NAME, VK_EXT_DEBUG_REPORT_SPEC_VERSION,
     };
 
     // enumerate our extensions first
     if (!pLayerName && pProperties) {
-        uint32_t count = std::min(
-            *pPropertyCount, static_cast<uint32_t>(loader_extensions.size()));
+        uint32_t count = std::min(*pPropertyCount, loader_extension_count);
 
         std::copy_n(loader_extensions.begin(), count, pProperties);
 
-        if (count < loader_extensions.size()) {
+        if (count < loader_extension_count) {
             *pPropertyCount = count;
             return VK_INCOMPLETE;
         }
@@ -718,7 +723,7 @@ VkResult EnumerateInstanceExtensionProperties(
                          loader_debug_report_extension.specVersion);
         }
 
-        *pPropertyCount += loader_extensions.size();
+        *pPropertyCount += loader_extension_count;
     }
 
     return result;
@@ -730,6 +735,41 @@ VkResult EnumerateDeviceExtensionProperties(
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
     const InstanceData& data = GetData(physicalDevice);
+
+    // KiroOS: the Vulkan 1.1 layer's device extensions follow the driver's
+    // (VK_EXT_memory_budget, VK_EXT_memory_priority; kiro_vk11.cpp)
+    const uint32_t kiro_count = pLayerName ? 0 : kiro::ExtraDeviceExtensionCount();
+    if (kiro_count) {
+        uint32_t driver_count = 0;
+        VkResult r = data.driver.EnumerateDeviceExtensionProperties(
+            physicalDevice, nullptr, &driver_count, nullptr);
+        if (r != VK_SUCCESS)
+            return r;
+        if (!pProperties) {
+            *pPropertyCount = driver_count + kiro_count;
+            return VK_SUCCESS;
+        }
+        uint32_t room = *pPropertyCount;
+        uint32_t written = std::min(room, driver_count);
+        r = data.driver.EnumerateDeviceExtensionProperties(
+            physicalDevice, nullptr, &written, pProperties);
+        if (r != VK_SUCCESS && r != VK_INCOMPLETE)
+            return r;
+        for (uint32_t i = 0; i < written; i++) {
+            auto& prop = pProperties[i];
+            if (strcmp(prop.extensionName,
+                       VK_ANDROID_NATIVE_BUFFER_EXTENSION_NAME) == 0) {
+                memcpy(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                       sizeof(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
+                prop.specVersion = VK_KHR_SWAPCHAIN_SPEC_VERSION;
+            }
+        }
+        const uint32_t extra = std::min(room - written, kiro_count);
+        std::copy_n(kiro::ExtraDeviceExtensions(), extra, pProperties + written);
+        *pPropertyCount = written + extra;
+        return (written < driver_count || extra < kiro_count) ? VK_INCOMPLETE
+                                                              : VK_SUCCESS;
+    }
 
     VkResult result = data.driver.EnumerateDeviceExtensionProperties(
         physicalDevice, pLayerName, pPropertyCount, pProperties);
@@ -772,11 +812,15 @@ VkResult CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
 
     data->hook_extensions |= wrapper.GetHookExtensions();
 
+    // KiroOS: an app asking for Vulkan 1.1 gets 1.0 from the driver below the loader's 1.1
+    VkInstanceCreateInfo kiro_info =
+        *static_cast<const VkInstanceCreateInfo*>(wrapper);
+    VkApplicationInfo kiro_app_info;
+    kiro::SanitizeInstanceCreateInfo(&kiro_info, &kiro_app_info);
+
     // call into the driver
     VkInstance instance;
-    result = Hal::Device().CreateInstance(
-        static_cast<const VkInstanceCreateInfo*>(wrapper), pAllocator,
-        &instance);
+    result = Hal::Device().CreateInstance(&kiro_info, pAllocator, &instance);
     if (result != VK_SUCCESS) {
         FreeInstanceData(data, data_allocator);
         return result;
@@ -837,6 +881,15 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
     if (result != VK_SUCCESS)
         return result;
 
+    // KiroOS: the Vulkan 1.1 / EXT structs off for the 1.0 driver, the features of a
+    // VkPhysicalDeviceFeatures2 as pEnabledFeatures, the 1.1 features the GPU lacks refused
+    VkDeviceCreateInfo kiro_info =
+        *static_cast<const VkDeviceCreateInfo*>(wrapper);
+    VkPhysicalDeviceFeatures kiro_features;
+    result = kiro::SanitizeDeviceCreateInfo(&kiro_info, &kiro_features);
+    if (result != VK_SUCCESS)
+        return result;
+
     DeviceData* data = AllocateDeviceData(data_allocator,
                                           instance_data.debug_report_callbacks);
     if (!data)
@@ -846,9 +899,8 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
 
     // call into the driver
     VkDevice dev;
-    result = instance_data.driver.CreateDevice(
-        physicalDevice, static_cast<const VkDeviceCreateInfo*>(wrapper),
-        pAllocator, &dev);
+    result = instance_data.driver.CreateDevice(physicalDevice, &kiro_info,
+                                               pAllocator, &dev);
     if (result != VK_SUCCESS) {
         FreeDeviceData(data, data_allocator);
         return result;
