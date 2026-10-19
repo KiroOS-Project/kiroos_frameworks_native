@@ -52,13 +52,33 @@ constexpr VkDeviceSize kMinMaxAllocation = 1ull << 30;
 constexpr size_t kMaxCacheFile = 32u << 20;
 constexpr auto kCacheSaveInterval = std::chrono::seconds(10);
 
+// Beta 4.1: every Vulkan 1.1 core feature the layer provides also goes out under its KHR
+// extension name, for the many apps and games written against 1.0 that look for the extension
+// rather than the 1.1 core (same commands, see kProcs). Left out: the 1.1 extensions the Mali-T760
+// cannot do (16-bit storage, multiview, variable pointers, sampler YCbCr, shader draw parameters,
+// storage buffer storage class and relaxed block layout, which need the closed shader compiler),
+// VK_KHR_maintenance2 (its structs would reach the 1.0 driver's image views) and
+// VK_KHR_device_group (its swapchain commands are not implemented; groups of one device are).
 const VkExtensionProperties kDeviceExtensions[] = {
     {VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, VK_EXT_MEMORY_BUDGET_SPEC_VERSION},
     {VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME, VK_EXT_MEMORY_PRIORITY_SPEC_VERSION},
+    {"VK_KHR_bind_memory2", 1},
+    {"VK_KHR_dedicated_allocation", 3},
+    {"VK_KHR_descriptor_update_template", 1},
+    {"VK_KHR_external_fence", 1},
+    {"VK_KHR_external_memory", 1},
+    {"VK_KHR_external_semaphore", 1},
+    {"VK_KHR_get_memory_requirements2", 1},
+    {"VK_KHR_maintenance1", 2},
+    {"VK_KHR_maintenance3", 1},
 };
 const VkExtensionProperties kInstanceExtensions[] = {
     {VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_SPEC_VERSION},
+    {"VK_KHR_device_group_creation", 1},
+    {"VK_KHR_external_fence_capabilities", 1},
+    {"VK_KHR_external_memory_capabilities", 1},
+    {"VK_KHR_external_semaphore_capabilities", 1},
 };
 
 struct BaseOut {
@@ -782,16 +802,23 @@ const Proc kProcs[] = {
     KIRO_PROC("vkBindImageMemory2", BindImageMemory2, true),
     KIRO_PROC("vkBindImageMemory2KHR", BindImageMemory2, true),
     KIRO_PROC("vkCmdDispatchBase", CmdDispatchBase, true),
+    KIRO_PROC("vkCmdDispatchBaseKHR", CmdDispatchBase, true),
     KIRO_PROC("vkCmdSetDeviceMask", CmdSetDeviceMask, true),
+    KIRO_PROC("vkCmdSetDeviceMaskKHR", CmdSetDeviceMask, true),
     KIRO_PROC("vkCreateDescriptorUpdateTemplate", CreateDescriptorUpdateTemplate, true),
+    KIRO_PROC("vkCreateDescriptorUpdateTemplateKHR", CreateDescriptorUpdateTemplate, true),
     KIRO_PROC("vkCreateSamplerYcbcrConversion", CreateSamplerYcbcrConversion, true),
     KIRO_PROC("vkDestroyDescriptorUpdateTemplate", DestroyDescriptorUpdateTemplate, true),
+    KIRO_PROC("vkDestroyDescriptorUpdateTemplateKHR", DestroyDescriptorUpdateTemplate, true),
     KIRO_PROC("vkDestroySamplerYcbcrConversion", DestroySamplerYcbcrConversion, true),
     KIRO_PROC("vkEnumeratePhysicalDeviceGroups", EnumeratePhysicalDeviceGroups, false),
+    KIRO_PROC("vkEnumeratePhysicalDeviceGroupsKHR", EnumeratePhysicalDeviceGroups, false),
     KIRO_PROC("vkGetBufferMemoryRequirements2", GetBufferMemoryRequirements2, true),
     KIRO_PROC("vkGetBufferMemoryRequirements2KHR", GetBufferMemoryRequirements2, true),
     KIRO_PROC("vkGetDescriptorSetLayoutSupport", GetDescriptorSetLayoutSupport, true),
+    KIRO_PROC("vkGetDescriptorSetLayoutSupportKHR", GetDescriptorSetLayoutSupport, true),
     KIRO_PROC("vkGetDeviceGroupPeerMemoryFeatures", GetDeviceGroupPeerMemoryFeatures, true),
+    KIRO_PROC("vkGetDeviceGroupPeerMemoryFeaturesKHR", GetDeviceGroupPeerMemoryFeatures, true),
     KIRO_PROC("vkGetDeviceQueue2", GetDeviceQueue2, true),
     KIRO_PROC("vkGetImageMemoryRequirements2", GetImageMemoryRequirements2, true),
     KIRO_PROC("vkGetImageMemoryRequirements2KHR", GetImageMemoryRequirements2, true),
@@ -800,9 +827,15 @@ const Proc kProcs[] = {
               true),
     KIRO_PROC("vkGetPhysicalDeviceExternalBufferProperties",
               GetPhysicalDeviceExternalBufferProperties, false),
+    KIRO_PROC("vkGetPhysicalDeviceExternalBufferPropertiesKHR",
+              GetPhysicalDeviceExternalBufferProperties, false),
     KIRO_PROC("vkGetPhysicalDeviceExternalFenceProperties",
               GetPhysicalDeviceExternalFenceProperties, false),
+    KIRO_PROC("vkGetPhysicalDeviceExternalFencePropertiesKHR",
+              GetPhysicalDeviceExternalFenceProperties, false),
     KIRO_PROC("vkGetPhysicalDeviceExternalSemaphoreProperties",
+              GetPhysicalDeviceExternalSemaphoreProperties, false),
+    KIRO_PROC("vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
               GetPhysicalDeviceExternalSemaphoreProperties, false),
     KIRO_PROC("vkGetPhysicalDeviceFeatures2", GetPhysicalDeviceFeatures2, false),
     KIRO_PROC("vkGetPhysicalDeviceFeatures2KHR", GetPhysicalDeviceFeatures2, false),
@@ -827,7 +860,9 @@ const Proc kProcs[] = {
     KIRO_PROC("vkGetPhysicalDeviceSparseImageFormatProperties2KHR",
               GetPhysicalDeviceSparseImageFormatProperties2, false),
     KIRO_PROC("vkTrimCommandPool", TrimCommandPool, true),
+    KIRO_PROC("vkTrimCommandPoolKHR", TrimCommandPool, true),
     KIRO_PROC("vkUpdateDescriptorSetWithTemplate", UpdateDescriptorSetWithTemplate, true),
+    KIRO_PROC("vkUpdateDescriptorSetWithTemplateKHR", UpdateDescriptorSetWithTemplate, true),
 };
 
 #undef KIRO_PROC

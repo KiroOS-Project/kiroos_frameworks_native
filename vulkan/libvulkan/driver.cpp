@@ -18,6 +18,7 @@
 #include <string.h>
 #include <algorithm>
 #include <array>
+#include <vector>
 #include <dlfcn.h>
 #include <new>
 #include <malloc.h>
@@ -668,17 +669,21 @@ VkResult EnumerateInstanceExtensionProperties(
     const char* pLayerName,
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
-    static const std::array<VkExtensionProperties, 3> loader_extensions = {{
-        // WSI extensions
-        {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
-        {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
-         VK_KHR_ANDROID_SURFACE_SPEC_VERSION},
-        // KiroOS: the Vulkan 1.1 layer (kiro_vk11.cpp), last so it can be left out
-        kiro::ExtraInstanceExtensions()[0],
-    }};
-    // without the Vulkan 1.1 layer only the WSI extensions
+    // WSI extensions, then (KiroOS) every instance extension of the Vulkan 1.1 layer
+    // (kiro_vk11.cpp); without the layer only the WSI extensions
+    static const std::vector<VkExtensionProperties> loader_extensions = [] {
+        std::vector<VkExtensionProperties> v = {
+            {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
+            {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+             VK_KHR_ANDROID_SURFACE_SPEC_VERSION},
+        };
+        const VkExtensionProperties* kiro_exts = kiro::ExtraInstanceExtensions();
+        const uint32_t n = kiro::ExtraInstanceExtensionCount();
+        v.insert(v.end(), kiro_exts, kiro_exts + n);
+        return v;
+    }();
     const uint32_t loader_extension_count =
-        2 + std::min(kiro::ExtraInstanceExtensionCount(), 1u);
+        static_cast<uint32_t>(loader_extensions.size());
     static const VkExtensionProperties loader_debug_report_extension = {
         VK_EXT_DEBUG_REPORT_EXTENSION_NAME, VK_EXT_DEBUG_REPORT_SPEC_VERSION,
     };
